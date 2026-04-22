@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 数据库
+*.db
+*.sqlite
+*.rdb
+
+# 日志
+*.log
+
+# 系统
+.DS_Store
+*.swp
+
+# IDE
+.idea/
+.vscode/
+
+# 敏感信息
+.env
+*.key
+*.token
+
+# 临时文件
+*.tmp
+*.bak
