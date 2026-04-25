@@ -1,3 +1,3 @@
-from .shortlink import Database
+from .shortlink import Database, Cache
 
-__all__ = ['Database']
+__all__ = ["Database", "Cache"]

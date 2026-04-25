@@ -6,6 +6,8 @@ from ..module import DatabaseModule
 
 mysql_cursor, redis_cursor = Cursor.mysql_cursor, Cursor.redis_cursor
 
+# TODO: 将 MySQL 类中的 exist 更名为 exists
+
 
 class MySQL(DatabaseModule):
     @staticmethod
@@ -90,4 +92,40 @@ class MySQL(DatabaseModule):
             return bool(cursor.fetchone()[0])
 
 
+class Redis:
+    @staticmethod
+    def get(long_url: HttpUrl) -> str | None:
+        with redis_cursor() as cursor:
+            result = cursor.get(str(long_url))
+            if result is None:
+                return None
+            return result if isinstance(result, str) else result.decode("utf-8")
+
+    @staticmethod
+    def set(long_url: HttpUrl, short_code: str, ex=None) -> bool:
+        with redis_cursor() as cursor:
+            return bool(cursor.set(str(long_url), short_code, ex=ex))
+
+    @staticmethod
+    def delete(long_url: HttpUrl) -> int:
+        with redis_cursor() as cursor:
+            return cursor.delete(str(long_url))
+
+    @staticmethod
+    def exists(long_url: HttpUrl) -> bool:
+        with redis_cursor() as cursor:
+            return cursor.exists(str(long_url)) > 0
+
+    @staticmethod
+    def expire(long_url: HttpUrl, seconds: int) -> bool:
+        with redis_cursor() as cursor:
+            return cursor.expire(str(long_url), seconds)
+
+    @staticmethod
+    def incr(long_url: HttpUrl) -> int:
+        with redis_cursor() as cursor:
+            return cursor.incr(str(long_url))
+
+
 Database = MySQL
+Cache = Redis
