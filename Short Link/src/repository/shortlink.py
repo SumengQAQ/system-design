@@ -3,10 +3,9 @@ from typing import Generator
 from ..database import Cursor
 from pydantic import HttpUrl
 from ..module import DatabaseModule
+# TODO: 缓存的模型也要加上
 
 mysql_cursor, redis_cursor = Cursor.mysql_cursor, Cursor.redis_cursor
-
-# TODO: 将 MySQL 类中的 exist 更名为 exists
 
 
 class MySQL(DatabaseModule):
@@ -39,8 +38,9 @@ class MySQL(DatabaseModule):
             MySQL.update(short_code)
             return res[0]
 
+    # NOTE: 这里为啥会报错 update 方法以不兼容的方式重写了 DatabaseModule ？？？
     @staticmethod
-    def update(short_code: str) -> None:
+    def update(where_value: str) -> None:  # pyright: ignore
         with mysql_cursor() as cursor:
             cursor.execute(
                 """
@@ -48,7 +48,7 @@ class MySQL(DatabaseModule):
                 set access_count = access_count + 1
                 where short_code = %s;
                 """,
-                (short_code,),
+                (where_value,),
             )
 
     @staticmethod
@@ -81,51 +81,101 @@ class MySQL(DatabaseModule):
                 yield row[0]
 
     @staticmethod
-    def exist(long_url: HttpUrl) -> bool:
+    def exists(key: str, value: str) -> bool:
         with mysql_cursor() as cursor:
             cursor.execute(
                 """
-                select 1 from shortlink where long_url = %s;
+                select 1 from shortlink where %s = %s;
                 """,
-                (long_url,),
+                (key, value),
             )
             return bool(cursor.fetchone()[0])
 
 
 class Redis:
     @staticmethod
-    def get(long_url: HttpUrl) -> str | None:
+    def get_long(key: str) -> str | None:
         with redis_cursor() as cursor:
-            result = cursor.get(str(long_url))
+            result = cursor.get(key)
             if result is None:
                 return None
             return result if isinstance(result, str) else result.decode("utf-8")
 
     @staticmethod
-    def set(long_url: HttpUrl, short_code: str, ex=None) -> bool:
+    def get_short(key: str) -> str | None:
         with redis_cursor() as cursor:
-            return bool(cursor.set(str(long_url), short_code, ex=ex))
+            result = cursor.get(key)
+            if result is None:
+                return None
+            return result if isinstance(result, str) else result.decode("utf-8")
 
     @staticmethod
-    def delete(long_url: HttpUrl) -> int:
+    def set(key: str, value: str, ex=None) -> bool:
         with redis_cursor() as cursor:
-            return cursor.delete(str(long_url))
+            return bool(cursor.set(str(key), value, ex=ex))
 
     @staticmethod
-    def exists(long_url: HttpUrl) -> bool:
+    def delete(key: str) -> int:
         with redis_cursor() as cursor:
-            return cursor.exists(str(long_url)) > 0
+            return cursor.delete(key)
 
     @staticmethod
-    def expire(long_url: HttpUrl, seconds: int) -> bool:
+    def exists(key: str) -> bool:
         with redis_cursor() as cursor:
-            return cursor.expire(str(long_url), seconds)
+            return cursor.exists(key) > 0
 
     @staticmethod
-    def incr(long_url: HttpUrl) -> int:
+    def expire(key: str, seconds: int) -> bool:
         with redis_cursor() as cursor:
-            return cursor.incr(str(long_url))
+            return cursor.expire(key, seconds)
+
+    @staticmethod
+    def incr(key: str) -> int:
+        with redis_cursor() as cursor:
+            return cursor.incr(key)
 
 
 Database = MySQL
 Cache = Redis
+
+
+class ShortLinkRepository:
+    @staticmethod
+    def get_long(short_code: str) -> str | None:
+        cached = Cache.get_long(f"short_code:{short_code}")
+        if cached:
+            return cached
+        return Database.get_long(short_code)
+
+    @staticmethod
+    def get_short(long_url: HttpUrl) -> str | None:
+        cached = Cache.get_short(f"long_url:{long_url}")
+        if cached:
+            return cached
+        return Database.get_short(long_url)
+
+    @staticmethod
+    def save(short_code: str, long_url: HttpUrl) -> int:
+        Cache.set(f"short_code:{short_code}", str(long_url))
+        Cache.set(f"long_url:{long_url}", short_code)
+        Cache.set(f"access_count:{short_code}", "0")
+        return Database.save(short_code, long_url)
+
+    @staticmethod
+    def exists_long(long_url: HttpUrl) -> bool:
+        cached = Cache.exists(f"long_url:{long_url}")
+        if cached:
+            return True
+        return Database.exists("long_url", str(long_url))
+
+    @staticmethod
+    def exists_short(short_code: str) -> bool:
+        cached = Cache.exists(f"short_code:{short_code}")
+        if cached:
+            return True
+        return Database.exists("short_code", short_code)
+
+    # TODO: 这边需要先更新缓存里面的 access_count ，然后每隔5分钟同步到数据库😭😭😭
+    @staticmethod
+    def increment(short_code: str) -> None:
+        Cache.incr(f"short_code:{short_code}")

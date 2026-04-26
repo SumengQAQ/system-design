@@ -33,8 +33,6 @@ class ShortLink(BaseModel):
     ) -> str:
         """将长链接转为短链接"""
 
-        # TODO: 这部分直接上Redis
-
         # NOTE:
         # 先看看布隆过滤器里面有没有这个长链接，如果一定没有，那就直接生成/自定义一个，不需要查数据库了
         # 剩下的情况就是可能有，就需要查一遍数据库，有的话就直接返回；确实没有的话，就生成一个
@@ -53,7 +51,7 @@ class ShortLink(BaseModel):
         # note
         # 如果缓存/数据库中有这个长链接了，直接返回相应的短链接
 
-        if Database.exist(encode_request.long_url):
+        if Database.exists(encode_request.long_url):
             return Database.get_short(encode_request.long_url)  # pyright: ignore
 
         # note

@@ -23,7 +23,7 @@ class DatabaseModule(ABC):
 
     @staticmethod
     @abstractmethod
-    def update(short_code: str) -> None:
+    def update(where_value: str) -> None:
         """更新短链接的使用计数"""
         ...
 
