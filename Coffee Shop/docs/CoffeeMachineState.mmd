@@ -1,0 +1,21 @@
+stateDiagram-v2
+    [*] --> IDLE : 系统启动
+
+    IDLE --> WORKING : 用户点单 / 开始制作
+    WORKING --> IDLE : 计时结束 / 制作完成
+
+    IDLE --> FAULT : 传感器异常 / 机器故障
+    FAULT --> IDLE : 故障排除 / 重置机器
+
+    IDLE --> HIBERNATION : 闲置超过30分钟 / 进入休眠
+    HIBERNATION --> IDLE : 用户唤醒 / 退出休眠
+
+    IDLE --> HIBERNATION : 手动关机
+    FAULT --> HIBERNATION : 手动关机
+
+    note right of WORKING : 制作中不可手动关机⛔
+    note right of FAULT : 故障状态下无法点单
+    note left of IDLE : 唯一可接受点单的状态
+
+    WORKING --> HIBERNATION : ❌ 不可关机
+    style WORKING fill:#ffe0e0

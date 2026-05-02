@@ -1,0 +1,11 @@
+[project]
+name = "coffee-shop"
+version = "0.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+extraPaths = ["src"]
