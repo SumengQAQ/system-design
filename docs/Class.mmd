@@ -1,0 +1,178 @@
+---
+config:
+  layout: elk
+  class:
+    hideEmptyMembersBox: true
+---
+%% 场景： 大学图书馆/自习室，学生可以预约座位、签到、暂离、续约。
+%% 业务规则：
+%% - 座位分区域（静音区/讨论区/电脑区）
+%% - 预约时段最小 1h，最长 4h
+%% - 预约后 30 分钟内不签到 → 自动取消 + 扣信用分
+%% - 暂离最长 30 分钟，超时自动释放座位
+%% - 信用分 < 60 → 本周不能再预约
+%% - 管理员可以设置座位维护状态
+classDiagram
+direction LR
+	namespace Model {
+    class ReputationScore {
+      value: int
+      %% 校验：value∈[0,100]
+      add_score(self) None
+      reduce_score(self) None
+      can_reservation(self) bool
+      %% 信用分 < 60 → 不能预约
+    }
+
+    class Student {
+      id: str
+      name: str
+      %% 校验：教务系统中看看有没有这个学生
+      %% 没有单独分出来StudentId这个类来做数据校验
+      %% 因为name需要和id联合校验
+      reputation_score: ReputationScore = ReputationScore(100)
+      %% 加上@property，直接返回reputation_score.value
+      %% __eq__和__hash__都用id
+    }
+
+    class SeatStatus {
+      <<Enum>>
+      AVAILABLE / OCCUPIED / MAINTAIN
+    }
+
+    class ReservationStatus {
+      <<Enum>>
+      PENDING_CHECK_IN / CHECHKED_IN / ENDED / EXPIRED / CANCELLED
+    }
+
+    class SeatType {
+      <<Enum>>
+      QUIET / DISCUSSION / COMPUTER
+    }
+
+    class Position {
+      <<@dataclass(frozen=True, slots=True)>>
+      row: int
+      column: int
+      %% __eq__和__hash__同时使用row和column
+    }
+
+    class Reservation {
+      id: str
+      from_time: datetime
+      to_time: datetime
+      %% 校验：from ≤ to，预约时段最小 1h，最长 4h
+      student_id: str
+      %% 需要从预约能查到学生，也需要从学生能查到预约
+      %% 此处student_id不需要校验，因为是由校验过的学生创建的
+      seat_position: Position
+      status: ReservationStatus = ReservationStatus.PENDING_CHECK_IN
+
+      check_in(self) None
+      cancel(self) None
+      end(self) None
+      %% 状态机轮转，等我画状态图
+      extend_time_period(self, to: datetime) None
+      %% 在Service层编排
+      %% __eq__和__hash__都用id
+    }
+
+    class Seat {
+      status: SeatStatus = AVAILABLE
+      type: SeatType
+      position: Position
+      %% 实际上座位不知道自己是什么类型，不知道自己在哪里
+      %% 但是这里这样写也不是不行，直接看成元组得了
+
+      occupy(self) None
+      unoccupy(self) None
+      %% 在Service层编排
+      %% __eq__和__hash__都用position
+    }
+	}
+  Position --> Reservation
+  ReputationScore --> Student
+  ReservationStatus --> Reservation
+  Student --> Reservation
+  Seat --> Reservation
+  Position --> Seat
+  SeatStatus --> Seat
+  SeatType --> Seat
+
+  namespace Ports {
+    class StudentRepository {
+      <<ABC>>
+      save(self, student: Stdent) None
+      get_by_id(self, student: Student) Student | None
+      get_all(self) list[Student]
+    }
+
+    class SeatRepository {
+      <<ABC>>
+      save(self, seat: Seat) None
+      get_by_position(self, position: Position) Seat | None
+      get_all(self) list[Seat]
+    }
+
+    class ReservationRepository {
+      <<ABC>>
+      save(self, reservation: Reservation) None
+      get_by_id(self, id: str) Reservation | None
+      get_by_student(self, student: Student) list[Reservation]
+      get_by_seat(self, seat: Seat) list[Reservation]
+      get_by_time_period(self, from: datetime, to: datetime) list[Reservation]
+      get_all(self) list[Reservation]
+    }
+  }
+  Student ..> StudentRepository
+  Position ..> SeatRepository
+  Seat ..> SeatRepository
+  Reservation ..> ReservationRepository
+
+  namespace Infrastructure {
+    class MemoryStudentRepository {
+      _students: dict[str, Student]
+      save(self, student: Stdent) None
+      get_by_id(self, student: Student) Student | None
+      get_all(self) list[Student]
+    }
+
+    class MemorySeatRepository {
+      _seats: dict[tuple(int, int), Seat]
+      save(self, seat: Seat) None
+      get_by_position(self, position: Position) Seat | None
+      get_all(self) list[Seat]
+    }
+
+    class MemoryReservationRepository {
+      _reservations: dict[str, Reservation]
+      save(self, reservation: Reservation) None
+      get_by_id(self, id: str) Reservation | None
+      get_by_student(self, student: Student) list[Reservation]
+      get_by_seat(self, seat: Seat) list[Reservation]
+      get_by_time_period(self, from: datetime, to: datetime) list[Reservation]
+      get_all(self) list[Reservation]
+    }
+  }
+  StudentRepository ..|> MemoryStudentRepository
+  Position ..> MemorySeatRepository
+  SeatRepository ..|> MemorySeatRepository
+  ReservationRepository ..|> MemoryReservationRepository
+  %% Student --> MemoryStudentRepository
+  %% Seat --> MemorySeatRepository
+  %% Reservation --> MemoryReservationRepository
+
+  namespace Exception {
+    class StudentInfoError{__init__(self, student_id: str, student_name: str)}
+    class TimeError{__init__(self, reservation_id: str, from: datetime, to: datetime)}
+    class ReputationScoreError{__init__(self, student_id: str, student_reputation_score: int)}
+    class SeatAlreadyOccupiedError{__init__(self, reservation_id: str, position: Position)}
+    %% 异常要有上下文才行，方便溯源
+    %% 还有预约相关的异常没写呢
+  }
+  Student ..> StudentInfoError
+  Reservation ..> TimeError
+  Student ..> ReputationScoreError
+  Seat ..> SeatAlreadyOccupiedError
+  Position ..> SeatAlreadyOccupiedError
+  Reservation ..> SeatAlreadyOccupiedError
