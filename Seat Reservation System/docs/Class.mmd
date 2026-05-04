@@ -42,7 +42,7 @@ direction LR
 
     class ReservationStatus {
       <<Enum>>
-      PENDING_CHECK_IN / CHECHKED_IN / ENDED / EXPIRED / CANCELLED
+      PENDING_CHECK_IN / CHECKED_IN / ENDED / EXPIRED / CANCELLED
     }
 
     class SeatType {
@@ -102,7 +102,7 @@ direction LR
   namespace Ports {
     class StudentRepository {
       <<ABC>>
-      save(self, student: Stdent) None
+      save(self, student: Stduent) None
       get_by_id(self, student: Student) Student | None
       get_all(self) list[Student]
     }
@@ -132,13 +132,13 @@ direction LR
   namespace Infrastructure {
     class MemoryStudentRepository {
       _students: dict[str, Student]
-      save(self, student: Stdent) None
+      save(self, student: Student) None
       get_by_id(self, student: Student) Student | None
       get_all(self) list[Student]
     }
 
     class MemorySeatRepository {
-      _seats: dict[tuple(int, int), Seat]
+      _seats: dict[tuple[int, int], Seat]
       save(self, seat: Seat) None
       get_by_position(self, position: Position) Seat | None
       get_all(self) list[Seat]
