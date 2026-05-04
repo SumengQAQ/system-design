@@ -1,0 +1,31 @@
+sequenceDiagram
+    actor 顾客
+    participant View as CliView
+    participant VM as CoffeeMachineViewModel
+    participant Service as CoffeeMachineService
+    participant Repo as CoffeeMachineRepository
+
+    顾客 ->> View: 输入“点单：拿铁”
+    View ->> VM: make_coffee(0, 30)
+    VM ->> Service: 验证库存 & 状态
+
+    alt 库存不足
+        Service -->> VM: 抛库存不足异常
+        VM -->> View: 显示“咖啡豆不足”
+    else 库存充足
+        Service ->> Service: 扣库存、改状态为WORKING
+        Service ->> Repo: save()
+        Repo -->> Service: 保存成功
+        Service -->> VM: 制作中(30秒)
+        VM -->> View: 刷新视图
+
+        note over Service: 30秒后计时器回调
+        Service ->> Service: 恢复状态为IDLE、计数+1
+
+        opt 计数达到5杯
+            Service ->> 通知适配器: 推送清洁提醒
+        end
+
+        Service -->> VM: 制作完成
+        VM -->> View: 刷新视图，显示“请取咖啡”
+    end

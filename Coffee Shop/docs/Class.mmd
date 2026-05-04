@@ -1,0 +1,307 @@
+---
+config:
+  layout: elk
+---
+classDiagram
+direction LR
+
+    %% ============================================================
+    %% Model / 领域模型
+    %% ============================================================
+    namespace Model{
+        class CoffeeMachineStatus {
+            <<enumerate>>
+            IDLE: int
+            HIBERNATION: int
+            WORKING: int
+            FAULT: int
+        }
+
+        class OrderStatus {
+            <<enumerate>>
+            TO_BE_PRODUCTED: int
+            IN_PRODUCTION: int
+            AWAITING_PICKUP: int
+            COMPLETED: int
+            CANCELLED: int
+        }
+
+        class CoffeeTypes{
+            <<enumerate>>
+            AMERICANO: int
+            LATTE: int
+            FLAT_WHITE: int
+            CAPPUCCINO: int
+            %% 以后要出新品，需要改到数据库内
+        }
+
+        class CoffeeMachine {
+            <<dataclass(slots=True)>>
+            -_serial_number: str
+            +waiting_time: int
+            +create_at: int
+            +consecutive_count: int = 0
+            +capacity: float = 0.0
+            +status: CoffeeMachineStatus = HIBERNATION
+            #__str__(self) str
+            %% 出厂序列号不可更改
+            %% consecutive_count: 连续制作次数，满5杯触发清洁提醒
+        }
+
+        class Order{
+            <<dataclass(slots=True)>>
+            +id: int | None = None
+            +customer_name: str
+            +coffee_type: CoffeeTypes
+            +create_at: datetime = datetime.now()
+            +status: OrderStatus = TO_BE_PRODUCTED
+            #__str__(self) str
+            %% id 由 MemoryOrderRepository 自增分配
+        }
+    }
+
+    CoffeeMachine --> CoffeeMachineStatus
+    Order --> OrderStatus
+    Order --> CoffeeTypes
+
+    %% ============================================================
+    %% Ports / 抽象接口（六边形架构的端口）
+    %% ============================================================
+    namespace Ports{
+        class CoffeeMachineRepository {
+            <<abstract>>
+            +save(coffee_machine: CoffeeMachine) bool
+            +delete(coffee_machine: CoffeeMachine) bool
+            +get_all() list[CoffeeMachine]
+            +get_one(serial_number: str) CoffeeMachine | None
+            _exists(serial_number: str) bool
+        }
+
+        class OrderRepository {
+            <<abstract>>
+            +save(order: Order) bool
+            +delete(order: Order) bool
+            +get_all() list[Order]
+            +get_one(id: int) Order | None
+            _exists(id: int) bool
+        }
+    }
+
+    CoffeeMachineRepository --> CoffeeMachine
+    OrderRepository --> Order
+
+    %% ============================================================
+    %% Repository / 适配器：内存实现
+    %% ============================================================
+    namespace Repository{
+        class MemoryCoffeeMachineRepository {
+            -_storage: list[CoffeeMachine]
+            +__init__() None
+            +save(coffee_machine: CoffeeMachine) bool
+            +delete(coffee_machine: CoffeeMachine) bool
+            +get_all() list[CoffeeMachine]
+            +get_one(serial_number: str) CoffeeMachine | None
+            _exists(serial_number: str) bool
+            %% save 为 upsert 语义：存在则覆盖，不存在则新增
+        }
+
+        class MemoryOrderRepository {
+            -_storage: list[Order]
+            -_next_id: int
+            +__init__() None
+            +save(order: Order) bool
+            +delete(order: Order) bool
+            +get_all() list[Order]
+            +get_one(id: int) Order | None
+            _exists(id: int) bool
+            %% save 为 upsert 语义；id=None 时自动分配自增 ID
+            %% 实例变量，每个测试/运行时隔离
+        }
+    }
+
+    MemoryCoffeeMachineRepository ..|> CoffeeMachineRepository
+    MemoryOrderRepository ..|> OrderRepository
+
+    %% ============================================================
+    %% Service / 业务逻辑层
+    %% ============================================================
+    %% 用横切关注点加上日志
+    %% 以及加上 @logger.catch
+    %% 找来的样例，实际要使用loguru创建日志文件并使用异步写入防止阻塞
+    %% def method_logger(cls):
+    %%     类装饰器：装饰整个类，并在类的方法被调用时触发
+    %%     for attr_name, attr_value in cls.__dict__.items():
+    %%         if callable(attr_value) and not attr_name.startswith("__"):
+    %%             setattr(cls, attr_name, wrap_method(attr_value))
+    %%     return cls
+    %% 
+    %% def wrap_method(func):
+    %%     @functools.wraps(func)
+    %%     def wrapper(*args, **kwargs):
+    %%         print(f"--- [日志] 开始执行方法: {func.__name__} ---")
+    %%         result = func(*args, **kwargs)
+    %%         print(f"--- [日志] 方法 {func.__name__} 执行结束 ---")
+    %%         return result
+    %%     return wrapper
+
+    namespace Service{
+        class CoffeeMachineService{
+            #__init__(self, coffee_machine_repository: CoffeeMachineRepository) None
+            +make_coffee(self, coffee_machine_index: int, waiting_time: int) bool
+            %% 校验：IDLE 状态 + 足够咖啡豆（每杯 15g）
+            %% 通过后：扣 15g 豆 + 状态改 WORKING
+            +add_coffee_beans(self, coffee_machine_index: int, grams: float) int
+            +cost_coffee_beans(self, coffee_machine_index: int, grams: float) int
+            +change_status(self, coffee_machine_index: int, status: CoffeeMachineStatus) bool
+            +turn_off(self, coffee_machine_index: int) bool
+            +increace_consecutive_count(self, coffee_machine_index: int) int
+            +get_all(self) list[CoffeeMachine]
+            +get_one(self, serial_number: str) CoffeeMachine | None
+            -_validate_index(self, index: int) None
+            +clean(self, coffee_machine_index: int) bool
+            %% coffee_machine_index 是列表下标，不是序列号
+            %% 容量上限 500g，超限抛 CoffeeBeanOverflowError
+            %% clean: 连续制作计数归零，配合满5杯清洁提醒使用
+            %% turn_off: WORKING 状态下不可关机，抛 CoffeeMachineAlreadyWorkingError
+        }
+
+        class OrderService{
+            #__init__(self, order_repository: OrderRepository) None
+            +create(self, user_name: str, coffee_types: CoffeeTypes) bool
+            +change_status(self, id: int, status: OrderStatus) bool
+            +get_all(self) list[Order]
+            +get_one(self, id: int) Order | None
+        }
+    }
+
+    CoffeeMachineService --> CoffeeMachineRepository
+    OrderService --> OrderRepository
+
+    %% ============================================================
+    %% ViewModel / 视图模型层
+    %% ============================================================
+    namespace ViewModel{
+        class CoffeeMachineViewModel{
+            -_coffee_machines: list[CoffeeMachine]
+            -_on_data_change: Callable | None
+            #__init__(self, coffee_machine_service, order_service) None
+            +bind(self, callable: Callable) None
+            +get_all(self) list[CoffeeMachine]
+            +_refresh(self) None
+            +make_coffee(self, coffee_machine_index: int, waiting_time: int, coffee_type: CoffeeTypes, grams: float, customer_name: str) bool
+            -_get_last_order_id(self) int
+            +add_coffee_beans(self, coffee_machine_index: int, grams: float) int
+            +turn_on(self, coffee_machine_index: int) bool
+            +turn_off(self, coffee_machine_index: int) bool
+            +clean(self, coffee_machine_index: int) bool
+            %% turn_off: WORKING 状态下不可关机，提示并返回 False
+            %% make_coffee 是核心方法：一站式创建订单 + 扣豆 + 倒计时 + 完成回调
+            %% 流程：创建订单(IN_PRODUCTION) -> 扣豆 -> await sleep -> 改订单(AWAITING_PICKUP) -> 加连续计数 -> 满5杯提醒清理
+            %% 注：咖啡豆不是瞬间消耗的，而是和制作时间正相关
+            %% 中途取消制作之后，咖啡豆没有被完全消耗（此项为未来拓展点）
+        }
+
+        class OrderViewModel{
+            -_orders: list[Order]
+            -_on_data_change: Callable | None
+            #__init__(self, order_service: OrderService) None
+            +bind(self, callable: Callable) None
+            +get_all(self) list[Order]
+            +_refresh(self) None
+            +finish(self, order_id: int) bool
+            %% finish 时校验：IN_PRODUCTION 状态的订单禁止完成
+            %% 只允许 AWAITING_PICKUP / TO_BE_PRODUCTED 的订单被完成
+        }
+    }
+
+    CoffeeMachineViewModel --> CoffeeMachine
+    CoffeeMachineViewModel --> OrderService
+    OrderViewModel --> Order
+
+    %% ============================================================
+    %% View / 展示层（CLI 终端）
+    %% ============================================================
+    %% 重点！view 层需要注入一个接受用户输入的函数
+    namespace View{
+        class CoffeeMachineView{
+            #__init__(self, coffee_machine_view_model, enter: Callable, output: Callable) None
+            +_on_data_changed(self) None
+            +_choose_machine(self, machines) int | None
+            +make_coffee(self) bool
+            +add_coffee_beans(self) bool
+            +turn_on(self) bool
+            +turn_off(self) bool
+            +clean(self) bool
+            %% enter/output 通过依赖注入传入（函数式，非枚举类）
+            %% 多个地方同时显示的话，需要改成事件总线
+        }
+
+        class OrderView{
+            #__init__(self, order_view_model, enter: Callable, output: Callable) None
+            +_on_data_changed(self) None
+            +list_orders(self) list[Order]
+            +finish(self) bool
+            %% 移除了 create 方法，订单创建统一在制作咖啡时完成
+        }
+    }
+
+    CoffeeMachineView --> CoffeeMachineViewModel
+    OrderView --> OrderViewModel
+    CoffeeMachineView --> Output
+    OrderView --> Output
+    CoffeeMachineView --> Enter
+    OrderView --> Enter
+
+    class Output{
+        <<enumerate>>
+        TERMINAL: Callable[[str], None]
+        APP: Callable[[str], None]
+    }
+
+    class Enter{
+        <<enumerate>>
+        TERMINAL: Callable[[str], str]
+        APP: Callable[[str], str]
+    }
+
+    %% ============================================================
+    %% Exception / 自定义异常
+    %% ============================================================
+    namespace Exception{
+        %% 所有异常都继承 Exception，字段为定位信息
+        class OrderExistError{
+            #__init__(self, order_id: int) None
+        }
+
+        class OrderNotFoundError{
+            #__init__(self, order_id: int) None
+        }
+
+        class CoffeeMachineExistError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class CoffeeMachineNotFoundError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class CoffeeMachineFaultError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class CoffeeMachineAlreadyWorkingError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class CoffeeMachineNotTurnOn{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class InsufficientCoffeeBeansError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+
+        class CoffeeBeanOverflowError{
+            #__init__(self, serial_number: str, coffee_machine_index: int) None
+        }
+    }

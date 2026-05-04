@@ -1,0 +1,29 @@
+erDiagram
+    coffee_machine{
+        int id PK
+        varchar(32) serial_number UK
+        float capacity
+        int status
+        %% check (status in [0,1,2,3])
+        int consecutive_count
+        %% 断电停止制作，丢失正在制作的咖啡进度
+    }
+    coffee_types{
+        int id PK
+        varchar(32) name UK
+        decimal price
+        %% check (price between 1 and 100)
+    }
+    order{
+        int id PK
+        varchar(16) user_name
+        %% 此处应使用 user_id  作为外键
+        %% 但重点不是这里，不进行拓展
+        int coffee_types_id FK
+        %% 这种设计导致一个订单只能有一杯咖啡
+        %% 可以拓展为一个订单多杯咖啡，使用一个中转表来解决
+        datetime create_at
+        int status
+        %% default 0
+    }
+    order ||--|| coffee_types : 咖啡的类型id
