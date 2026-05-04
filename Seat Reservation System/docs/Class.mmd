@@ -16,15 +16,17 @@ classDiagram
 direction LR
 	namespace Model {
     class ReputationScore {
+      <<@dataclass(frozen=True, slots=True)>>
       value: int
       %% 校验：value∈[0,100]
-      add_score(self) None
-      reduce_score(self) None
+      add_score(self) ReputationScore
+      reduce_score(self) ReputationScore
       can_reservation(self) bool
       %% 信用分 < 60 → 不能预约
     }
 
     class Student {
+      <<@dataclass(kw_only=True, slots=True)>>
       id: str
       name: str
       %% 校验：教务系统中看看有没有这个学生
@@ -54,17 +56,23 @@ direction LR
       <<@dataclass(frozen=True, slots=True)>>
       row: int
       column: int
-      %% __eq__和__hash__同时使用row和column
+    }
+
+    class TimePeriod {
+      <<@dataclass(frozen=True, slots=True)>>
+      from_time: datetime
+      to_time: datetime
+      extend_time_period(self, to: datetime) TimePeriod
+      %% 校验：from ≤ to，预约时段最小 1h，最长 4h
     }
 
     class Reservation {
+      <<@dataclass(kw_only=True, slots=True)>>
       id: str
-      from_time: datetime
-      to_time: datetime
-      %% 校验：from ≤ to，预约时段最小 1h，最长 4h
       student_id: str
       %% 需要从预约能查到学生，也需要从学生能查到预约
       %% 此处student_id不需要校验，因为是由校验过的学生创建的
+      time_period: TimePeriod
       seat_position: Position
       status: ReservationStatus = ReservationStatus.PENDING_CHECK_IN
 
@@ -72,12 +80,12 @@ direction LR
       cancel(self) None
       end(self) None
       %% 状态机轮转，等我画状态图
-      extend_time_period(self, to: datetime) None
       %% 在Service层编排
       %% __eq__和__hash__都用id
     }
 
     class Seat {
+      <<@dataclass(kw_only=True, slots=True)>>
       status: SeatStatus = AVAILABLE
       type: SeatType
       position: Position
@@ -93,6 +101,7 @@ direction LR
   Position --> Reservation
   ReputationScore --> Student
   ReservationStatus --> Reservation
+  TimePeriod --> Reservation
   Student --> Reservation
   Seat --> Reservation
   Position --> Seat
@@ -102,7 +111,7 @@ direction LR
   namespace Ports {
     class StudentRepository {
       <<ABC>>
-      save(self, student: Stduent) None
+      save(self, student: Student) None
       get_by_id(self, student: Student) Student | None
       get_all(self) list[Student]
     }
@@ -120,14 +129,37 @@ direction LR
       get_by_id(self, id: str) Reservation | None
       get_by_student(self, student: Student) list[Reservation]
       get_by_seat(self, seat: Seat) list[Reservation]
-      get_by_time_period(self, from: datetime, to: datetime) list[Reservation]
+      get_by_time_period(self, time_period: TimePeriod) list[Reservation]
       get_all(self) list[Reservation]
     }
   }
   Student ..> StudentRepository
   Position ..> SeatRepository
   Seat ..> SeatRepository
+  TimePeriod ..> ReservationRepository
   Reservation ..> ReservationRepository
+
+  namespace Service{
+    class ReservationService {
+      _reservation_repository: ReservationRepository
+      _event_bus: EventBus
+
+      __init__(reservation_repository: ReservationRepository, event_bus: EventBus)
+      reserve(self, )
+      %% 写到这里了，下次继续
+      %% 需要分成三个Service
+      %% 最后用门面模式给编排一下
+    }
+  }
+
+  EventBus --> ReservationService
+  ReservationRepository --> ReservationService
+
+  namespace Event{
+    class ReservationCreated{}
+    class ReservationCreatedTimeOut{}
+    %% 写到这里了，下次继续
+  }
 
   namespace Infrastructure {
     class MemoryStudentRepository {
@@ -138,7 +170,7 @@ direction LR
     }
 
     class MemorySeatRepository {
-      _seats: dict[Position, Seat]
+      _seats: dict[tuple[int, int], Seat]
       save(self, seat: Seat) None
       get_by_position(self, position: Position) Seat | None
       get_all(self) list[Seat]
@@ -150,27 +182,35 @@ direction LR
       get_by_id(self, id: str) Reservation | None
       get_by_student(self, student: Student) list[Reservation]
       get_by_seat(self, seat: Seat) list[Reservation]
-      get_by_time_period(self, from: datetime, to: datetime) list[Reservation]
+      get_by_time_period(self, time_period: TimePeriod) list[Reservation]
       get_all(self) list[Reservation]
+    }
+
+    class EventBus{
+      <<ABC>>
+      register(self, event_type: type, handler: Callable) None
+      publish(self, event: object) None
     }
   }
   StudentRepository ..|> MemoryStudentRepository
   Position ..> MemorySeatRepository
   SeatRepository ..|> MemorySeatRepository
   ReservationRepository ..|> MemoryReservationRepository
+  TimePeriod ..> MemoryReservationRepository
   %% Student --> MemoryStudentRepository
   %% Seat --> MemorySeatRepository
   %% Reservation --> MemoryReservationRepository
 
   namespace Exception {
     class StudentInfoError{__init__(self, student_id: str, student_name: str)}
-    class TimeError{__init__(self, reservation_id: str, from: datetime, to: datetime)}
+    class TimeError{__init__(self, reservation_id: str, time_period: TimePeriod)}
     class ReputationScoreError{__init__(self, student_id: str, student_reputation_score: int)}
     class SeatAlreadyOccupiedError{__init__(self, reservation_id: str, position: Position)}
     %% 异常要有上下文才行，方便溯源
     %% 还有预约相关的异常没写呢
   }
   Student ..> StudentInfoError
+  TimePeriod --> TimeError
   Reservation ..> TimeError
   Student ..> ReputationScoreError
   Seat ..> SeatAlreadyOccupiedError
