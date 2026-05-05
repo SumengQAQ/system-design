@@ -75,6 +75,9 @@ direction LR
       time_period: TimePeriod
       seat_position: Position
       status: ReservationStatus = ReservationStatus.PENDING_CHECK_IN
+      temporarily_away_available_time: int = 1800
+      %% 直接用秒数就足够了
+      %% 当然不应该直接这样写，最好是用配置文件
 
       check_in(self) None
       cancel(self) None
@@ -98,6 +101,7 @@ direction LR
       %% __eq__和__hash__都用position
     }
 	}
+
   Position --> Reservation
   ReputationScore --> Student
   ReservationStatus --> Reservation
@@ -111,7 +115,7 @@ direction LR
   namespace Ports {
     class StudentRepository {
       <<ABC>>
-      save(self, student: Student) None
+      save(self, student: Stduent) None
       get_by_id(self, student: Student) Student | None
       get_all(self) list[Student]
     }
@@ -133,32 +137,102 @@ direction LR
       get_all(self) list[Reservation]
     }
   }
+
   Student ..> StudentRepository
   Position ..> SeatRepository
   Seat ..> SeatRepository
   TimePeriod ..> ReservationRepository
   Reservation ..> ReservationRepository
 
-  namespace Service{
+  namespace Service {
     class ReservationService {
-      _reservation_repository: ReservationRepository
+      _repository: ReservationRepository
+      _event_bus: EventBus
+      
+      __init__(repository: ReservationRepository, event_bus: EventBus) None
+      reserve(self, student_id: str, time_period: TimePeriod, seat_position: Position) None
+      %% publish一个ReservationCreated或InsufficientReputationScoreEvent
+      %% 实际应该是用户处于登录状态才能使用，自动传入student_id
+      %% 应该怎么体现这一点？
+      check_in(self, id: str) None
+      cancel(self, id: str) None
+      end(self, id: str) None
+      extend_time_period(self, id: str, time_period: TimePeriod) None
+      %% 校验：起始时间相同 && 终止时间延长 && 终止时间 - 起始时间 ≤ 4h
+      %% 这几个本来想publish一个UpdateView事件的，但是没必要，前端负责这部分
+      temporarily_away(self, id: str) None
+      %% 这里面需要用异步来倒计时
+      %% 所以这部分也需要一个事件
+      %% publish一个TemporarilyAwayEvent
+      return(self, id: str) None
+      %% 中断倒计时并重置temporarily_away_available_time
+      %% 这里不涉及到其他的部分，不需要事件了
+    }
+
+    class StudentService {
+      _repository: StudentRepository
       _event_bus: EventBus
 
-      __init__(reservation_repository: ReservationRepository, event_bus: EventBus)
-      reserve(self, )
-      %% 写到这里了，下次继续
-      %% 需要分成三个Service
-      %% 最后用门面模式给编排一下
+      __init__(repository: StudentRepository, event_bus: EventBus) None
+      %% update_reputation_score(self, id: str, reputation_score: ReputationScore) None
+      %% reputation_score的增加是一个异步的周期任务
+      %% 当reputation_score减少时，publish一个ReduceReputationScore
+      %% 但是这样写也就意味着不能直接指定修改多少
+      %% 所以此处直接传入属性值而不是值对象
+      add_reputation_score(self, id: str, value: int) None
+      reduce_reputation_score(self, id: str, value: int) None
+      %% 写到这里了
     }
   }
 
   EventBus --> ReservationService
   ReservationRepository --> ReservationService
+  TimePeriod ..> ReservationService
+  Position ..> ReservationService
+  EventBus --> StudentService
+  StudentRepository --> StudentService
 
-  namespace Event{
-    class ReservationCreated{}
-    class ReservationCreatedTimeOut{}
-    %% 写到这里了，下次继续
+  namespace Event {
+    class ReservationCreatedEvent {
+      id: str
+      student_id: str
+      time_period: TimePeriod
+      seat_position: Position
+      status: ReservationStatus
+    }
+    
+    class ReservationCreatedTimeOutEvent {
+      id: str
+      student_id: str
+      time_period: TimePeriod
+      seat_position: Position
+      status: ReservationStatus
+      now_time: datetime = time.now()
+    }
+
+    class InsufficientReputationScoreEvent {
+      id: str
+      name: str
+      reputation_score: ReputationScore
+    }
+
+    class TemporarilyAwayEvent {
+      id: str
+      temporarily_away_available_time: int
+      %% 接到这个事件的开始倒计时
+      %% 倒计时结束后，自动释放座位并标记预约单为已超时
+      %% 然后扣除信誉分
+    }
+
+    class ReduceReputationScore {
+      id: str
+      reputation_score: ReputationScore
+    }
+
+    %% 虽然有一些已经有相关的Exception了
+    %% 但是我觉得Exception只应该负责记录错误日志，不负责输出
+    %% 所以还需要有相应的Event来负责输出
+    %% 写到这里了
   }
 
   namespace Infrastructure {
@@ -186,12 +260,13 @@ direction LR
       get_all(self) list[Reservation]
     }
 
-    class EventBus{
+    class EventBus {
       <<ABC>>
       register(self, event_type: type, handler: Callable) None
       publish(self, event: object) None
     }
   }
+
   StudentRepository ..|> MemoryStudentRepository
   Position ..> MemorySeatRepository
   SeatRepository ..|> MemorySeatRepository
@@ -209,6 +284,7 @@ direction LR
     %% 异常要有上下文才行，方便溯源
     %% 还有预约相关的异常没写呢
   }
+
   Student ..> StudentInfoError
   TimePeriod --> TimeError
   Reservation ..> TimeError
