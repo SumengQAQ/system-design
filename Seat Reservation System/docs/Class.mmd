@@ -55,7 +55,7 @@ direction LR
     class Position {
       <<@dataclass(frozen=True, slots=True)>>
       row: int
-      column: int
+      column: int 
     }
 
     class TimePeriod {
@@ -68,8 +68,9 @@ direction LR
 
     class Reservation {
       <<@dataclass(kw_only=True, slots=True)>>
-      id: str
+      id: int
       student_id: str
+      timer_id: int
       %% 需要从预约能查到学生，也需要从学生能查到预约
       %% 此处student_id不需要校验，因为是由校验过的学生创建的
       time_period: TimePeriod
@@ -151,32 +152,39 @@ direction LR
       
       __init__(self, repository: ReservationRepository, event_bus: EventBus) None
       reserve(self, student_id: str, time_period: TimePeriod, seat_position: Position) None
-      %% publish一个ReservationCreated或InsufficientReputationScoreEvent
       %% 实际应该是用户处于登录状态才能使用，自动传入student_id
+      %% 用一下countdown_begin()
+      %% 比如每隔10分钟，更新一下距离签到的时间
+      %% 然后结束时间设置为签到时间+30分钟，结束的时候去扣信誉分
+      %% check_in提前中断计时
+      %% 等会，用户离场全靠自觉吗？？？🫠🫠🫠
+      %% 同一个预约单只能同时存在一个计时器，这是合理的
+      %% 因为没签到前不可能暂离
+      %% 当然这部分的维护交给状态机，还需要定义对应的异常
+
       check_in(self, id: str) None
+      %% 中断计时器
       cancel(self, id: str) None
       end(self, id: str) None
       extend_time_period(self, id: str, time_period: TimePeriod) None
-      %% 校验：起始时间相同 && 终止时间延长 && 终止时间 - 起始时间 ≤ 4h
+      %% 校验：起始时间相同 && 终止时间延长
       %% 这几个本来想publish一个UpdateView事件的，但是没必要，前端负责这部分
       countdown_begin(self, id: str) None
-      %% 这里面需要用异步来倒计时
-      %% 所以这部分也需要一个事件
-      %% publish一个TemporarilyAwayEvent
+      %% 这里的形参要加上Timer的那一堆参数
+      %% Timer()开始计时
+      
       %% 之前的方法名是temporarily_waay
       %% 但是我感觉在单独的Service里面还是先控制好结合具体语境的程度
       %% 到了StudentSeatReservationService里面再考虑用暂时离场/离场返回这种说法
       %% 虽然这两个方法目前也不需要跨领域编排，但是还是要注意方法名，尽可能专注于目前的服务
       countdown_end(self, id: str) None
-      %% 中断倒计时并重置temporarily_away_available_time
-      %% 这里不涉及到其他的部分，不需要事件了
+      %% 中断计时器，这里还没写完
     }
 
     class StudentService {
       _repository: StudentRepository
-      _event_bus: EventBus
 
-      __init__(self, repository: StudentRepository, event_bus: EventBus) None
+      __init__(self, repository: StudentRepository) None
       %% update_reputation_score(self, id: str, reputation_score: ReputationScore) None
       %% reputation_score的增加是一个异步的周期任务
       %% 当reputation_score减少时，publish一个ReduceReputationScore
@@ -190,9 +198,8 @@ direction LR
 
     class SeatService {
       _repository: SeatRepository
-      _event_bus: EventBus
 
-      __init__(self, repository: SeatRepository, event_bus: EventBus) None
+      __init__(self, repository: SeatRepository) None
       occupy(self, position: Position) None
       unoccupy(self, position: Position) None
       maintain(self, position: Position) None
@@ -200,27 +207,25 @@ direction LR
     }
 
     class StudentSeatReservationService {
-      _event_bus: EventBus
-
-      __init__(self, event_bus: EventBus) None
+      __init__(self) None
       %% 写到这里了，对于事件驱动我还不是特别熟
       %% 所以可能需要先补习一下再继续
     }
 
   }
 
-  EventBus --> ReservationService
+  %% EventBus --> ReservationService
   ReservationRepository --> ReservationService
   TimePeriod ..> ReservationService
   Position ..> ReservationService
   Reservation ..> ReservationService
 
-  EventBus --> StudentService
+  %% EventBus --> StudentService
   StudentRepository --> StudentService
   Studnet ..> StudentService
   ReputationScore ..> StudentService
 
-  EventBus --> SeatService
+  %% EventBus --> SeatService
   StudentRepository --> SeatService
   Position ..> SeatService
 
@@ -228,48 +233,47 @@ direction LR
   StudentService ..> StudentSeatReservationService
   SeatService ..> StudentSeatReservationService
 
-  namespace Event {
-    class ReservationCreatedEvent {
-      id: str
-      student_id: str
-      time_period: TimePeriod
-      seat_position: Position
-      status: ReservationStatus
-    }
+  %% namespace Event {
+  %%   class ReservationCreatedEvent {
+  %%     id: str
+  %%     student_id: str 
+  %%     time_period: TimePeriod
+  %%     seat_position: Position
+  %%     status: ReservationStatus
+  %%   }
     
-    class ReservationCreatedTimeOutEvent {
-      id: str
-      student_id: str
-      time_period: TimePeriod
-      seat_position: Position
-      status: ReservationStatus
-      now_time: datetime = time.now()
-    }
+  %%   class ReservationCreatedTimeOutEvent {
+  %%     id: str
+  %%     student_id: str
+  %%     time_period: TimePeriod
+  %%     seat_position: Position
+  %%     status: ReservationStatus
+  %%     now_time: datetime = time.now()
+  %%   }
 
-    class InsufficientReputationScoreEvent {
-      id: str
-      name: str
-      reputation_score: ReputationScore
-    }
+  %%   class InsufficientReputationScoreEvent {
+  %%     id: str
+  %%     name: str
+  %%     reputation_score: ReputationScore
+  %%   }
 
-    class TemporarilyAwayEvent {
-      id: str
-      temporarily_away_available_time: int
-      %% 接到这个事件的开始倒计时
-      %% 倒计时结束后，自动释放座位并标记预约单为已超时
-      %% 然后扣除信誉分
-    }
+  %%   class TemporarilyAwayEvent {
+  %%     id: str
+  %%     temporarily_away_available_time: int
+  %%     %% 接到这个事件的开始倒计时
+  %%     %% 倒计时结束后，自动释放座位并标记预约单为已超时
+  %%     %% 然后扣除信誉分
+  %%   }
 
-    class ReduceReputationScore {
-      id: str
-      reputation_score: ReputationScore
-    }
+  %%   class ReduceReputationScore {
+  %%     id: str
+  %%     reputation_score: ReputationScore
+  %%   }
 
-    %% 虽然有一些已经有相关的Exception了
-    %% 但是我觉得Exception只应该负责记录错误日志，不负责输出
-    %% 所以还需要有相应的Event来负责输出
-    %% 还没写完
-  }
+  %%   %% 虽然有一些已经有相关的Exception了
+  %%   %% 但是我觉得Exception只应该负责记录错误日志，不负责输出
+  %%   %% 所以还需要有相应的Event来负责输出
+  %% }
 
   namespace Infrastructure {
     class MemoryStudentRepository {
@@ -296,10 +300,44 @@ direction LR
       get_all(self) list[Reservation]
     }
 
-    class EventBus {
-      <<ABC>>
-      register(self, event_type: type, handler: Callable) None
-      publish(self, event: object) None
+    %% 根本用不上事件总线……
+    %% class EventBus {
+    %%   <<ABC>>
+    %%   _handlers: dict[type, list[Callable]] = defaultdict(list)
+
+    %%   register(self, event_type: type, handler: Callable) None
+    %%   publish(self, event: object) None
+    %% }
+
+    class Timer {
+      <<@dataclass(frozen=True, slots=True)>>
+
+      id: int
+      %% 和Reservation关联
+      scan_cycle: int = 30
+      waiting_time: int
+      time_based_trigger: Callable[[dict],None] = lambda: None
+      time_based_parameter: dict[str,Any]
+      final_trigger: Callable[[dict],None] = lambda: None
+      final_parameter: dict[str,Any]
+      can_continue: bool = False
+
+      __init__(
+        self, 
+        scan_cycle: int,
+        waiting_time: int,
+        time_based_trigger: Callable[[dict],None] = lambda: None, 
+        time_based_parameter: dict[str,Any],
+        interrupt_trigger: Callable[[dict],None] = lambda: None, 
+        interrupt_parameter: dict[str,Any],
+        final_trigger: Callable[[dict],None] = lambda: None, 
+        final_parameter: dict[str,Any]
+      ) None
+      scan(self) None
+      %% 等待scan_cycle秒后，调用self.time_based_trigger(self.time_based_parameter)
+      %% 当waiting_time秒后，调用self.final_trigger(self.final_parameter)
+      %% 若can_continue == False，则提前终止并调用self.interrupt_trigger(self.interrupt_parameter)
+      interrupt(self) None
     }
   }
 
