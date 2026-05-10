@@ -1,0 +1,36 @@
+sequenceDiagram
+    participant API
+    participant StudentSeatReservationService
+    participant Command
+    participant Timer
+    rect rgba(255, 255, 255, 0.2)
+        API ->> StudentSeatReservationService: 发起预约
+        StudentSeatReservationService ->> StudentSeatReservationService: 信誉分是否大于60
+        StudentSeatReservationService ->> StudentSeatReservationService: 预约时间段是否重合
+        StudentSeatReservationService ->> Command: 将_undo添加至命令管道
+        StudentSeatReservationService ->> StudentSeatReservationService: 预约
+        alt 正常
+            StudentSeatReservationService -) Timer: 启动签到计时器
+        else 异常
+            Command -->> StudentSeatReservationService: 逐级回滚
+        end
+        StudentSeatReservationService -->> API: 返回结果
+    end
+    rect rgba(255, 255, 255, 0.2)
+        API ->> StudentSeatReservationService: 签到
+        StudentSeatReservationService ->> Command: 将_undo添加至命令管道
+        StudentSeatReservationService ->> StudentSeatReservationService: 签到
+        alt 正常
+            alt 未超时
+                StudentSeatReservationService -) Timer: 结束签到计时器
+                StudentSeatReservationService -) Timer: 启动自习计时器
+            else 超时
+                StudentSeatReservationService ->> StudentSeatReservationService: 设置预约单为超时未签到
+                StudentSeatReservationService ->> StudentSeatReservationService: 扣除用户信誉分
+            end
+        else 异常
+            Command -->> StudentSeatReservationService: 逐级回滚
+        end
+        StudentSeatReservationService -->> API: 返回结果
+    end
+    %% 还没写暂离和延长时间的呢

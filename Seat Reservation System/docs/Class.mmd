@@ -37,10 +37,10 @@ direction LR
       %% __eq__和__hash__都用id
     }
 
-    class SeatStatus {
-      <<Enum>>
-      AVAILABLE / OCCUPIED / MAINTAIN
-    }
+    %% class SeatStatus {
+    %%   <<Enum>>
+    %%   AVAILABLE / OCCUPIED / MAINTAIN
+    %% }
 
     class ReservationStatus {
       <<Enum>>
@@ -87,10 +87,16 @@ direction LR
       %% 在Service层编排
       %% __eq__和__hash__都用id
     }
-
+    %% ⚠ 不同的时间段，座位的占用情况不同
+    %% 所以需要遍历一遍预约单，看看指定时间段座位的情况
+    %% 然后就不需要status这个属性了
+    %% 当然查询的量是比预约的量大得多的
+    %% 所以每次遍历一遍肯定是不行的，需要上缓存才行
+    %% 这部分还没写
     class Seat {
       <<@dataclass(kw_only=True, slots=True)>>
-      status: SeatStatus = AVAILABLE
+      %% status: SeatStatus = AVAILABLE
+      on_maintain: bool = False
       type: SeatType
       position: Position
       %% 实际上座位不知道自己是什么类型，不知道自己在哪里
@@ -110,7 +116,7 @@ direction LR
   Student --> Reservation
   Seat --> Reservation
   Position --> Seat
-  SeatStatus --> Seat
+  %% SeatStatus --> Seat
   SeatType --> Seat
 
   namespace Ports {
@@ -259,7 +265,7 @@ direction LR
   %%     seat_position: Position
   %%     status: ReservationStatus
   %%   }
-    
+ 
   %%   class ReservationCreatedTimeOutEvent {
   %%     id: str
   %%     student_id: str

@@ -1,0 +1,15 @@
+---
+config:
+  layout: elk
+  class:
+    hideEmptyMembersBox: true
+---
+stateDiagram-v2
+    [*] --> PENDING_CHECK_IN : 预约成功
+    PENDING_CHECK_IN --> CHECKED_IN : 签到
+    PENDING_CHECK_IN --> EXPIRED : 超时未签到
+    CHECKED_IN --> TEMPORARILY_AWAY : 暂离
+    TEMPORARILY_AWAY --> CHECKED_IN : 返回
+    TEMPORARILY_AWAY --> EXPIRED : 暂离超时
+    CHECKED_IN --> ENDED : 结束
+    PENDING_CHECK_IN --> CANCELLED : 取消
