@@ -33,7 +33,6 @@ direction LR
       %% 没有单独分出来StudentId这个类来做数据校验
       %% 因为name需要和id联合校验
       reputation_score: ReputationScore = ReputationScore(100)
-      %% 加上@property，直接返回reputation_score.value
       %% __eq__和__hash__都用id
     }
 
@@ -62,7 +61,7 @@ direction LR
       <<@dataclass(frozen=True, slots=True)>>
       from_time: datetime
       to_time: datetime
-      extend_time_period(self, to: datetime) TimePeriod
+      extend_time_period(self, to_time: datetime) TimePeriod
       %% 校验：from ≤ to，预约时段最小 1h，最长 4h
     }
 
@@ -123,7 +122,7 @@ direction LR
     class StudentRepository {
       <<ABC>>
       save(self, student: Stduent) None
-      get_by_id(self, student: Student) Student | None
+      get_by_id(self, student_id: str) Student | None
       get_all(self) list[Student]
     }
 
@@ -131,6 +130,8 @@ direction LR
       <<ABC>>
       save(self, seat: Seat) None
       get_by_position(self, position: Position) Seat | None
+      %% TODO: 这种找不到资源的，统一一个异常
+      %% 因为按道理来说，根本就不应该触发找不到资源的情况
       get_all(self) list[Seat]
     }
 
@@ -138,11 +139,13 @@ direction LR
       <<ABC>>
       save(self, reservation: Reservation) None
       get_by_id(self, id: str) Reservation | None
-      get_by_student(self, student: Student) list[Reservation]
-      get_by_seat(self, seat: Seat) list[Reservation]
+      get_by_student_id(self, student_id: str) list[Reservation]
+      get_by_seat_position(self, position: Position) list[Reservation]
       get_by_time_period(self, time_period: TimePeriod) list[Reservation]
       get_all(self) list[Reservation]
     }
+    %% NOTE: 最少知道原则
+    %% TODO: 修改类之间的连线
   }
 
   Student ..> StudentRepository
