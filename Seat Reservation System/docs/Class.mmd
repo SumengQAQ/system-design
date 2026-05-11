@@ -36,11 +36,6 @@ direction LR
       %% __eq__和__hash__都用id
     }
 
-    %% class SeatStatus {
-    %%   <<Enum>>
-    %%   AVAILABLE / OCCUPIED / MAINTAIN
-    %% }
-
     class ReservationStatus {
       <<Enum>>
       PENDING_CHECK_IN / CHECKED_IN / ENDED / EXPIRED / CANCELLED
@@ -82,11 +77,10 @@ direction LR
       check_in(self) None
       cancel(self) None
       end(self) None
-      %% 状态机轮转，等我画状态图
       %% 在Service层编排
       %% __eq__和__hash__都用id
     }
-    %% ⚠ 不同的时间段，座位的占用情况不同
+    %% WARN: ⚠ 不同的时间段，座位的占用情况不同
     %% 所以需要遍历一遍预约单，看看指定时间段座位的情况
     %% 然后就不需要status这个属性了
     %% 当然查询的量是比预约的量大得多的
@@ -115,13 +109,12 @@ direction LR
   Student --> Reservation
   Seat --> Reservation
   Position --> Seat
-  %% SeatStatus --> Seat
   SeatType --> Seat
 
   namespace Ports {
     class StudentRepository {
       <<ABC>>
-      save(self, student: Stduent) None
+      save(self, student: Student) None
       get_by_id(self, student_id: str) Student | None
       get_all(self) list[Student]
     }
@@ -153,42 +146,19 @@ direction LR
   Seat ..> SeatRepository
   TimePeriod ..> ReservationRepository
   Reservation ..> ReservationRepository
+  Timer --> Reservation
+  Timer --> ReservationService
 
-  namespace Service {
-    class ReservationService {
-      _repository: ReservationRepository
-      _event_bus: EventBus
-      
-      __init__(self, repository: ReservationRepository, event_bus: EventBus) None
-      reserve(self, student_id: str, time_period: TimePeriod, seat_position: Position) None
-      %% 实际应该是用户处于登录状态才能使用，自动传入student_id
-      %% 用一下countdown_begin()
-      %% 比如每隔10分钟，更新一下距离签到的时间
-      %% 然后结束时间设置为签到时间+30分钟，结束的时候去扣信誉分
-      %% check_in提前中断计时
-      %% 等会，用户离场全靠自觉吗？？？🫠🫠🫠
-      %% 还是用计时器，到时间了自动释放座位吧。这样下一个人来了就把上一个人赶走了
-      %% 同一个预约单只能同时存在一个计时器，这是合理的
-      %% 因为没签到前不可能暂离
-      %% 当然这部分的维护交给状态机，还需要定义对应的异常
+  class Command {
+      %% 用Command类装饰StudentSeatReservationService，调用方全程无感
+      cls: type
+      command_list: list[Callable[[None],Callable]]
 
-      check_in(self, id: str) None
-      %% 中断计时器
-      cancel(self, id: str) None
-      end(self, id: str) None
-      extend_time_period(self, id: str, time: int) None
-      %% 这几个本来想publish一个UpdateView事件的，但是没必要，前端负责这部分
-      countdown_begin(self, id: str) None
-      %% 这里的形参要加上Timer的那一堆参数
-      %% Timer()开始计时
-      
-      %% 之前的方法名是temporarily_waay
-      %% 但是我感觉在单独的Service里面还是先控制好结合具体语境的程度
-      %% 到了StudentSeatReservationService里面再考虑用暂时离场/离场返回这种说法
-      %% 虽然这两个方法目前也不需要跨领域编排，但是还是要注意方法名，尽可能专注于目前的服务
-      countdown_end(self, id: str) None
-      %% 中断计时器，这里还没写完
-    }
+      __init__(self, cls) None
+      __call__(self, *args, **kwargs) Command
+      %% 把全部不以_开头的方法setattr到_push装饰器
+      _push(self, func: Callable) None
+  }
 
     class StudentService {
       _repository: StudentRepository
@@ -237,18 +207,15 @@ direction LR
     }
   }
 
-  %% EventBus --> ReservationService
   ReservationRepository --> ReservationService
   TimePeriod ..> ReservationService
   Position ..> ReservationService
   Reservation ..> ReservationService
 
-  %% EventBus --> StudentService
   StudentRepository --> StudentService
   Student ..> StudentService
   ReputationScore ..> StudentService
 
-  %% EventBus --> SeatService
   StudentRepository --> SeatService
   Position ..> SeatService
 
@@ -256,114 +223,43 @@ direction LR
   SeatService --> StudentSeatReservationService
   StudentService --> StudentSeatReservationService
 
-  ReservationService ..> StudentSeatReservationService
-  StudentService ..> StudentSeatReservationService
-  SeatService ..> StudentSeatReservationService
-
-  %% namespace Event {
-  %%   class ReservationCreatedEvent {
-  %%     id: str
-  %%     student_id: str 
-  %%     time_period: TimePeriod
-  %%     seat_position: Position
-  %%     status: ReservationStatus
-  %%   }
- 
-  %%   class ReservationCreatedTimeOutEvent {
-  %%     id: str
-  %%     student_id: str
-  %%     time_period: TimePeriod
-  %%     seat_position: Position
-  %%     status: ReservationStatus
-  %%     now_time: datetime = time.now()
-  %%   }
-
-  %%   class InsufficientReputationScoreEvent {
-  %%     id: str
-  %%     name: str
-  %%     reputation_score: ReputationScore
-  %%   }
-
-  %%   class TemporarilyAwayEvent {
-  %%     id: str
-  %%     temporarily_away_available_time: int
-  %%     %% 接到这个事件的开始倒计时
-  %%     %% 倒计时结束后，自动释放座位并标记预约单为已超时
-  %%     %% 然后扣除信誉分
-  %%   }
-
-  %%   class ReduceReputationScore {
-  %%     id: str
-  %%     reputation_score: ReputationScore
-  %%   }
-
-  %%   %% 虽然有一些已经有相关的Exception了
-  %%   %% 但是我觉得Exception只应该负责记录错误日志，不负责输出
-  %%   %% 所以还需要有相应的Event来负责输出
-  %% }
-
   namespace Infrastructure {
     class MemoryStudentRepository {
       _students: dict[str, Student]
       save(self, student: Student) None
-      get_by_id(self, student: Student) Student | None
+      get_by_id(self, student_id: str) Student
       get_all(self) list[Student]
     }
 
     class MemorySeatRepository {
-      _seats: dict[tuple[int, int], Seat]
+      _seats: dict[Position, Seat]
       save(self, seat: Seat) None
-      get_by_position(self, position: Position) Seat | None
+      get_by_position(self, position: Position) Seat
       get_all(self) list[Seat]
     }
 
     class MemoryReservationRepository {
       _reservations: dict[str, Reservation]
       save(self, reservation: Reservation) None
-      get_by_id(self, id: str) Reservation | None
-      get_by_student(self, student: Student) list[Reservation]
-      get_by_seat(self, seat: Seat) list[Reservation]
+      get_by_id(self, id: str) Reservation
+      get_by_student_id(self, student_id: str) list[Reservation]
+      get_by_seat_position(self, position: Position) list[Reservation]
       get_by_time_period(self, time_period: TimePeriod) list[Reservation]
       get_all(self) list[Reservation]
     }
-
-    %% 根本用不上事件总线……
-    %% class EventBus {
-    %%   <<ABC>>
-    %%   _handlers: dict[type, list[Callable]] = defaultdict(list)
-
-    %%   register(self, event_type: type, handler: Callable) None
-    %%   publish(self, event: object) None
-    %% }
 
     class Timer {
       <<@dataclass(frozen=True, slots=True)>>
 
       id: int
-      %% 和Reservation关联
       scan_cycle: int = 30
       waiting_time: int
-      time_based_trigger: Callable[[dict],None] = lambda: None
+      time_based_trigger: Callable[[dict],None] = lambda _: None
       time_based_parameter: dict[str,Any]
-      final_trigger: Callable[[dict],None] = lambda: None
+      final_trigger: Callable[[dict],None] = lambda _: None
       final_parameter: dict[str,Any]
-      can_continue: bool = False
 
-      __init__(
-        self, 
-        scan_cycle: int,
-        waiting_time: int,
-        time_based_trigger: Callable[[dict],None] = lambda: None, 
-        time_based_parameter: dict[str,Any],
-        interrupt_trigger: Callable[[dict],None] = lambda: None, 
-        interrupt_parameter: dict[str,Any],
-        final_trigger: Callable[[dict],None] = lambda: None, 
-        final_parameter: dict[str,Any]
-      ) None
       scan(self) None
-      %% 等待scan_cycle秒后，调用self.time_based_trigger(self.time_based_parameter)
-      %% 当waiting_time秒后，调用self.final_trigger(self.final_parameter)
-      %% 若can_continue == False，则提前终止并调用self.interrupt_trigger(self.interrupt_parameter)
       interrupt(self) None
     }
     %% Timmer与其他类的关系还没画
@@ -376,7 +272,7 @@ direction LR
       __init__(self, cls) None
       __call__(self, *args, **kwargs) Command
       %% 把全部不以_开头的方法setattr到_push装饰器
-      _push(self, func: Callable[[None],Callable]) None
+      _push(self, func: Callable) None
       %% 这是一个装饰器
       %% 对于每一个函数，先执行，若有异常，则回滚command_list中的全部内容
       %% 当然这需要每一个函数都有对应的撤销方法，命名为原函数名_undo
@@ -390,10 +286,7 @@ direction LR
   SeatRepository ..|> MemorySeatRepository
   ReservationRepository ..|> MemoryReservationRepository
   TimePeriod ..> MemoryReservationRepository
-  %% Student --> MemoryStudentRepository
-  %% Seat --> MemorySeatRepository
-  %% Reservation --> MemoryReservationRepository
-  Command --> StudentSeatReservationService
+  StudentSeatReservationService ..> Command
 
   namespace Exception {
     class DomainError {}
@@ -417,6 +310,7 @@ direction LR
     class DatabaseConnectionError {__init__(self, info: str)}
     class PersistenceError {__init__(self, info: str)}
     class DataIntegrityError {__init__(self, info: str)}
+    class ResourceNotFoundError {__init__(self, info: str)}
 
     class MissingConfigurationError {__init__(self, info: str)}
     class InvalidConfigurationError {__init__(self, info: str)}
@@ -428,12 +322,12 @@ direction LR
     class ExternalServiceError {__init__(self, info: str)}
     %% 我还不太清楚这些基础设施层系统故障要携带什么上下文，以后可能会加上
   }
-  %% DomainError给个WARNNING就行了
-  %% InfrastructureError视情况ERROR/CRITICAL，然后还要考虑运维告警与优雅降级
+  %% NOTE: DomainError给个WARNNING就行了，InfrastructureError视情况ERROR/CRITICAL，然后还要考虑运维告警与优雅降级
 
   DomainError --|> InvalidReservationStateError
   DomainError --|> InvalidSeatStateError
   DomainError --|> ReputationScoreOutOfRangeError
+  DomainError --|> ResourceNotFoundError
 
   InfrastructureError --|> DatabaseConnectionError
   InfrastructureError --|> PersistenceError
