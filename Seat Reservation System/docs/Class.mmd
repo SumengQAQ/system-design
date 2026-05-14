@@ -4,41 +4,28 @@ config:
   class:
     hideEmptyMembersBox: true
 ---
-%% 场景： 大学图书馆/自习室，学生可以预约座位、签到、暂离、续约。
-%% 业务规则：
-%% - 座位分区域（静音区/讨论区/电脑区）
-%% - 预约时段最小 1h，最长 4h
-%% - 预约后 30 分钟内不签到 → 自动取消 + 扣信用分
-%% - 暂离最长 30 分钟，超时自动释放座位
-%% - 信用分 < 60 → 本周不能再预约
-%% - 管理员可以设置座位维护状态
 classDiagram
-direction LR
-	namespace Model {
+  direction LR
+
+  namespace Model {
     class ReputationScore {
       <<@dataclass(frozen=True, slots=True)>>
       value: int
-      %% 校验：value∈[0,100]
       add_score(self) ReputationScore
-      reduce_score(self) ReputationScore
+      reduce_score(self, value: int) ReputationScore
       can_reservation(self) bool
-      %% 信用分 < 60 → 不能预约
     }
 
     class Student {
       <<@dataclass(kw_only=True, slots=True)>>
       id: str
       name: str
-      %% 校验：教务系统中看看有没有这个学生
-      %% 没有单独分出来StudentId这个类来做数据校验
-      %% 因为name需要和id联合校验
       reputation_score: ReputationScore = ReputationScore(100)
-      %% __eq__和__hash__都用id
     }
 
     class ReservationStatus {
       <<Enum>>
-      PENDING_CHECK_IN / CHECKED_IN / ENDED / EXPIRED / CANCELLED
+      PENDING_CHECK_IN / CHECKED_IN / TEMPORARILY_AWAY / ENDED / EXPIRED / CANCELLED
     }
 
     class SeatType {
@@ -49,7 +36,7 @@ direction LR
     class Position {
       <<@dataclass(frozen=True, slots=True)>>
       row: int
-      column: int 
+      column: int
     }
 
     class TimePeriod {
@@ -57,7 +44,7 @@ direction LR
       from_time: datetime
       to_time: datetime
       extend_time_period(self, to_time: datetime) TimePeriod
-      %% 校验：from ≤ to，预约时段最小 1h，最长 4h
+      overlaps_with(self, other: TimePeriod) bool
     }
 
     class Reservation {
@@ -65,42 +52,26 @@ direction LR
       id: int
       student_id: str
       timer_id: int
-      %% 需要从预约能查到学生，也需要从学生能查到预约
-      %% 此处student_id不需要校验，因为是由校验过的学生创建的
       time_period: TimePeriod
       seat_position: Position
-      status: ReservationStatus = ReservationStatus.PENDING_CHECK_IN
+      status: ReservationStatus = PENDING_CHECK_IN
       temporarily_away_available_time: int = 1800
-      %% 直接用秒数就足够了
-      %% 当然不应该直接这样写，最好是用配置文件
-
       check_in(self) None
       cancel(self) None
       end(self) None
-      %% 在Service层编排
-      %% __eq__和__hash__都用id
+      expire(self) None
+      temporarily_away(self) None
+      return_from_away(self) None
+      _force_set_status(self, status: ReservationStatus) None
     }
-    %% WARN: ⚠ 不同的时间段，座位的占用情况不同
-    %% 所以需要遍历一遍预约单，看看指定时间段座位的情况
-    %% 然后就不需要status这个属性了
-    %% 当然查询的量是比预约的量大得多的
-    %% 所以每次遍历一遍肯定是不行的，需要上缓存才行
-    %% 这部分还没写
+
     class Seat {
       <<@dataclass(kw_only=True, slots=True)>>
-      %% status: SeatStatus = AVAILABLE
       on_maintain: bool = False
       type: SeatType
       position: Position
-      %% 实际上座位不知道自己是什么类型，不知道自己在哪里
-      %% 但是这里这样写也不是不行，直接看成元组得了
-
-      occupy(self) None
-      unoccupy(self) None
-      %% 在Service层编排
-      %% __eq__和__hash__都用position
     }
-	}
+  }
 
   Position --> Reservation
   ReputationScore --> Student
@@ -115,30 +86,26 @@ direction LR
     class StudentRepository {
       <<ABC>>
       save(self, student: Student) None
-      get_by_id(self, student_id: str) Student | None
+      get_by_id(self, student_id: str) Student
       get_all(self) list[Student]
     }
 
     class SeatRepository {
       <<ABC>>
       save(self, seat: Seat) None
-      get_by_position(self, position: Position) Seat | None
-      %% TODO: 这种找不到资源的，统一一个异常
-      %% 因为按道理来说，根本就不应该触发找不到资源的情况
+      get_by_position(self, position: Position) Seat
       get_all(self) list[Seat]
     }
 
     class ReservationRepository {
       <<ABC>>
       save(self, reservation: Reservation) None
-      get_by_id(self, id: str) Reservation | None
+      get_by_id(self, id: int) Reservation
       get_by_student_id(self, student_id: str) list[Reservation]
       get_by_seat_position(self, position: Position) list[Reservation]
       get_by_time_period(self, time_period: TimePeriod) list[Reservation]
       get_all(self) list[Reservation]
     }
-    %% NOTE: 最少知道原则
-    %% TODO: 修改类之间的连线
   }
 
   Student ..> StudentRepository
@@ -146,39 +113,41 @@ direction LR
   Seat ..> SeatRepository
   TimePeriod ..> ReservationRepository
   Reservation ..> ReservationRepository
-  Timer --> Reservation
-  Timer --> ReservationService
 
   class Command {
-      %% 用Command类装饰StudentSeatReservationService，调用方全程无感
-      cls: type
-      command_list: list[Callable[[None],Callable]]
-
-      __init__(self, cls) None
-      __call__(self, *args, **kwargs) Command
-      %% 把全部不以_开头的方法setattr到_push装饰器
-      _push(self, func: Callable) None
+    <<Generic[T]>>
+    cls: type[T]
+    command_list: list[Callable]
+    __init__(self, cls: type[T]) None
+    __call__(self, *args, **kwargs) T
+    _push(self, func: Callable, name: str) Callable
+    _wrap_methods(self, cls: type[T]) None
   }
+
+  namespace Services {
+    class ReservationService {
+      _repository: ReservationRepository
+      _timer_manager: TimerManager
+      __init__(self, repository, timer_manager) None
+      reserve(self, student_id, time_period, seat_position) Reservation
+      check_in(self, id: int) None
+      cancel(self, id: int) None
+      end(self, id: int) None
+      extend_time_period(self, id: int, seconds: int) None
+      countdown_begin(self, id: int) None
+      countdown_end(self, id: int) None
+    }
 
     class StudentService {
       _repository: StudentRepository
-
-      __init__(self, repository: StudentRepository) None
-      %% update_reputation_score(self, id: str, reputation_score: ReputationScore) None
-      %% reputation_score的增加是一个异步的周期任务
-      %% 当reputation_score减少时，publish一个ReduceReputationScore
-      %% 但是这样写也就意味着不能直接指定修改多少
-      %% 所以此处直接传入属性值而不是值对象
+      __init__(self, repository) None
       add_reputation_score(self, id: str, value: int) None
       reduce_reputation_score(self, id: str, value: int) None
-      add_reservation(self, student_id: str, reservation_id: str) None
-      delete_reservation(self, student_id: str, reservation_id: str) None
     }
 
     class SeatService {
       _repository: SeatRepository
-
-      __init__(self, repository: SeatRepository) None
+      __init__(self, repository) None
       occupy(self, position: Position) None
       unoccupy(self, position: Position) None
       maintain(self, position: Position) None
@@ -190,20 +159,18 @@ direction LR
       _reservation_service: ReservationService
       _student_service: StudentService
       _seat_service: SeatService
-
-      __init__(self, reservation_service: ReservationService, student_service: StudentService, seat_service: SeatService) None
-      reserve(self, student_id: str, time_period: TimePeriod, seat_position: Position) None
+      __init__(self, reservation_service, student_service, seat_service, timer_manager) None
+      reserve(self, student_id, time_period, seat_position) None
       check_in(self, reservation_id: str) None
-      extend_time_period(self, reservation_id: str, time: int) None
+      extend_time_period(self, reservation_id: str, seconds: int) None
       temporarily_away(self, reservation_id: str) None
       return_from_away(self, reservation_id: str) None
-      %% 因为被Command装饰，所以要提供对应的undo方法
-      reserve_undo(self, student_id: str, time_period: TimePeriod, seat_position: Position) None
+      reserve_undo(self, student_id, time_period, seat_position) None
       check_in_undo(self, reservation_id: str) None
-      extend_time_period_undo(self, reservation_id: str, time: int) None
+      extend_time_period_undo(self, reservation_id: str, seconds: int) None
       temporarily_away_undo(self, reservation_id: str) None
       return_from_away_undo(self, reservation_id: str) None
-      %% 其他的Service里面不用加undo了，这里统一处理就够了
+      auto_increase_reputation(self, student_id: str) None
     }
   }
 
@@ -211,17 +178,19 @@ direction LR
   TimePeriod ..> ReservationService
   Position ..> ReservationService
   Reservation ..> ReservationService
+  TimerManager --> ReservationService
 
   StudentRepository --> StudentService
   Student ..> StudentService
   ReputationScore ..> StudentService
 
-  StudentRepository --> SeatService
+  SeatRepository --> SeatService
   Position ..> SeatService
 
   ReservationService --> StudentSeatReservationService
   SeatService --> StudentSeatReservationService
   StudentService --> StudentSeatReservationService
+  TimerManager --> StudentSeatReservationService
 
   namespace Infrastructure {
     class MemoryStudentRepository {
@@ -239,9 +208,9 @@ direction LR
     }
 
     class MemoryReservationRepository {
-      _reservations: dict[str, Reservation]
+      _reservations: dict[int, Reservation]
       save(self, reservation: Reservation) None
-      get_by_id(self, id: str) Reservation
+      get_by_id(self, id: int) Reservation
       get_by_student_id(self, student_id: str) list[Reservation]
       get_by_seat_position(self, position: Position) list[Reservation]
       get_by_time_period(self, time_period: TimePeriod) list[Reservation]
@@ -250,85 +219,88 @@ direction LR
 
     class Timer {
       <<@dataclass(frozen=True, slots=True)>>
-
       id: int
-      scan_cycle: int = 30
       waiting_time: int
-      time_based_trigger: Callable[[dict],None] = lambda _: None
-      time_based_parameter: dict[str,Any]
-      final_trigger: Callable[[dict],None] = lambda _: None
-      final_parameter: dict[str,Any]
-
-      scan(self) None
-      interrupt(self) None
+      time_based_parameter: dict[str, Any]
+      final_parameter: dict[str, Any]
+      time_based_trigger: Callable[[dict], None]
+      final_trigger: Callable[[dict], None]
+      scan_cycle: int = 30
     }
-    %% Timmer与其他类的关系还没画
+
+    class TimerManager {
+      _timers: dict[int, Timer]
+      _threads: dict[int, ThreadingTimer]
+      _interrupted: set[int]
+      create_timer(self, waiting_time, final_trigger, ...) Timer
+      start_timer(self, timer_id: int) None
+      interrupt(self, timer_id: int) None
+      remove_timer(self, timer_id: int) None
+    }
 
     class Command {
-      %% 用Command类装饰StudentSeatReservationService，调用方全程无感
-      cls: type
-      command_list: list[Callable[[None],Callable]]
-
-      __init__(self, cls) None
-      __call__(self, *args, **kwargs) Command
-      %% 把全部不以_开头的方法setattr到_push装饰器
-      _push(self, func: Callable) None
-      %% 这是一个装饰器
-      %% 对于每一个函数，先执行，若有异常，则回滚command_list中的全部内容
-      %% 当然这需要每一个函数都有对应的撤销方法，命名为原函数名_undo
-      %% 若无异常，则将原函数名_undo加入command_list中
-      %% 为了保留undo的参数，需要用lambda进行包装
+      <<Generic[T]>>
+      cls: type[T]
+      command_list: list[Callable]
+      __init__(self, cls: type[T]) None
+      __call__(self, *args, **kwargs) T
+      _push(self, func: Callable, name: str) Callable
+      _wrap_methods(self, cls: type[T]) None
     }
   }
 
   StudentRepository ..|> MemoryStudentRepository
-  Position ..> MemorySeatRepository
   SeatRepository ..|> MemorySeatRepository
   ReservationRepository ..|> MemoryReservationRepository
-  TimePeriod ..> MemoryReservationRepository
+  Timer --> TimerManager
   StudentSeatReservationService ..> Command
 
   namespace Exception {
-    class DomainError {}
-
-    class InfrastructureError {}
-
+    class DomainError {
+      <<Exception>>
+    }
+    class InfrastructureError {
+      <<Exception>>
+    }
     class InvalidReservationStateError {
-      __init__(self, info: str, status_from: Any, status_to: Any) None
+      __init__(self, info, status_from, status_to)
     }
-
     class InvalidSeatStateError {
-      __init__(self, info: str, status_from: Any, status_to: Any) None
+      __init__(self, info, status_from, status_to)
     }
-
     class ReputationScoreOutOfRangeError {
-      __init__(self, info: str, reputation_score: ReputationScore, to: int)
-      %% 理论上还需要给上student_id才行，但这里reputation_score是不知道student的
-      %% 所以不加了
+      __init__(self, info, score_value, to)
     }
-
-    class DatabaseConnectionError {__init__(self, info: str)}
-    class PersistenceError {__init__(self, info: str)}
-    class DataIntegrityError {__init__(self, info: str)}
-    class ResourceNotFoundError {__init__(self, info: str)}
-
-    class MissingConfigurationError {__init__(self, info: str)}
-    class InvalidConfigurationError {__init__(self, info: str)}
-    %% 这两个可以使用配置默认值
-    %% 当然如果是后端数据库密码这种默认值也救不了的话，直接exit得了
-    %% 对于前端使用者来说默认值救不了的话，拒绝访问就可以了
-
-    class ExternalServiceUnavailableError {__init__(self, info: str)}
-    class ExternalServiceError {__init__(self, info: str)}
-    %% 我还不太清楚这些基础设施层系统故障要携带什么上下文，以后可能会加上
+    class DatabaseConnectionError {
+      __init__(self, info)
+    }
+    class PersistenceError {
+      __init__(self, info)
+    }
+    class DataIntegrityError {
+      __init__(self, info)
+    }
+    class ResourceNotFoundError {
+      __init__(self, info)
+    }
+    class MissingConfigurationError {
+      __init__(self, info)
+    }
+    class InvalidConfigurationError {
+      __init__(self, info)
+    }
+    class ExternalServiceUnavailableError {
+      __init__(self, info)
+    }
+    class ExternalServiceError {
+      __init__(self, info)
+    }
   }
-  %% NOTE: DomainError给个WARNNING就行了，InfrastructureError视情况ERROR/CRITICAL，然后还要考虑运维告警与优雅降级
 
   DomainError --|> InvalidReservationStateError
   DomainError --|> InvalidSeatStateError
   DomainError --|> ReputationScoreOutOfRangeError
   DomainError --|> ResourceNotFoundError
-
   InfrastructureError --|> DatabaseConnectionError
   InfrastructureError --|> PersistenceError
   InfrastructureError --|> DataIntegrityError

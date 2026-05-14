@@ -1,4 +1,19 @@
 from .model import ReputationScore, Student, ReservationStatus, SeatType, Position, TimePeriod, Reservation, Seat
+from .exception import (
+    DomainError,
+    InfrastructureError,
+    InvalidReservationStateError,
+    InvalidSeatStateError,
+    ReputationScoreOutOfRangeError,
+    ResourceNotFoundError,
+    DatabaseConnectionError,
+    PersistenceError,
+    DataIntegrityError,
+    MissingConfigurationError,
+    InvalidConfigurationError,
+    ExternalServiceUnavailableError,
+    ExternalServiceError,
+)
 
 __all__ = [
     "ReputationScore",
@@ -9,4 +24,17 @@ __all__ = [
     "TimePeriod",
     "Reservation",
     "Seat",
+    "DomainError",
+    "InfrastructureError",
+    "InvalidReservationStateError",
+    "InvalidSeatStateError",
+    "ReputationScoreOutOfRangeError",
+    "ResourceNotFoundError",
+    "DatabaseConnectionError",
+    "PersistenceError",
+    "DataIntegrityError",
+    "MissingConfigurationError",
+    "InvalidConfigurationError",
+    "ExternalServiceUnavailableError",
+    "ExternalServiceError",
 ]

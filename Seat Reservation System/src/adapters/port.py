@@ -3,6 +3,8 @@ from .model import Student, Seat, Position, Reservation
 
 
 class StudentRepository(ABC):
+    """学生数据库1操作"""
+
     @abstractmethod
     def save(self, student: Student) -> None: ...
     @abstractmethod
@@ -12,6 +14,8 @@ class StudentRepository(ABC):
 
 
 class SeatRepository(ABC):
+    """座位数据库操作"""
+
     @abstractmethod
     def save(self, seat: Seat) -> None: ...
     @abstractmethod
@@ -21,6 +25,8 @@ class SeatRepository(ABC):
 
 
 class ReservationRepository(ABC):
+    """预约数据库操作"""
+
     @abstractmethod
     def save(self, reservation: Reservation) -> None: ...
     @abstractmethod

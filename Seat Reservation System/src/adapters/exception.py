@@ -1,52 +1,97 @@
 from typing import Any
-from .model import ReputationScore
 
 
-class DomainError: ...
+class DomainError(Exception):
+    """业务异常"""
 
 
-class InfrastructureError: ...
+class InfrastructureError(Exception):
+    """基础设施异常"""
 
 
 class InvalidReservationStateError(DomainError):
-    def __init__(self, info: str, status_from: Any, status_to: Any): ...
+    """预约状态异常"""
+
+    def __init__(self, info: str, status_from: Any, status_to: Any):
+        self.info = info
+        self.status_from = status_from
+        self.status_to = status_to
+        super().__init__(f"{info}: {status_from} -> {status_to}")
 
 
 class InvalidSeatStateError(DomainError):
-    def __init__(self, info: str, status_from: Any, status_to: Any): ...
+    """座位状态异常"""
+
+    def __init__(self, info: str, status_from: Any, status_to: Any):
+        self.info = info
+        self.status_from = status_from
+        self.status_to = status_to
+        super().__init__(f"{info}: {status_from} -> {status_to}")
 
 
 class ReputationScoreOutOfRangeError(DomainError):
-    def __init__(self, info: str, reputation_score: ReputationScore, to: int): ...
+    """信用分异常"""
+
+    def __init__(self, info: str, score_value: int, to: int):
+        self.info = info
+        self.score_value = score_value
+        self.to = to
+        super().__init__(f"{info}: score={score_value}, attempt to={to}")
 
 
 class DatabaseConnectionError(InfrastructureError):
-    def __init__(self, info: str): ...
+    """数据库连接异常"""
+
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Database connection error: {info}")
 
 
 class PersistenceError(InfrastructureError):
-    def __init__(self, info: str): ...
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Persistence error: {info}")
 
 
 class DataIntegrityError(InfrastructureError):
-    def __init__(self, info: str): ...
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Data integrity error: {info}")
 
 
-class ResourceNotFoundError(InfrastructureError):
-    def __init__(self, info: str): ...
+class ResourceNotFoundError(DomainError):
+    """资源未找到"""
+
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Resource not found: {info}")
 
 
 class MissingConfigurationError(InfrastructureError):
-    def __init__(self, info: str): ...
+    """配置项缺失"""
+
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Missing configuration: {info}")
 
 
 class InvalidConfigurationError(InfrastructureError):
-    def __init__(self, info: str): ...
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"Invalid configuration: {info}")
 
 
 class ExternalServiceUnavailableError(InfrastructureError):
-    def __init__(self, info: str): ...
+    """未找到服务"""
+
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"External service unavailable: {info}")
 
 
 class ExternalServiceError(InfrastructureError):
-    def __init__(self, info: str): ...
+    """服务不可用"""
+
+    def __init__(self, info: str):
+        self.info = info
+        super().__init__(f"External service error: {info}")
